@@ -80,7 +80,7 @@ class Modelo(threading.Thread):
         else:
             self.online = True
             self.file = os.path.join(setting['save_directory'], self.modelo,
-                                     f'{datetime.datetime.fromtimestamp(time.time()).strftime("%Y.%m.%d_%H.%M.%S")}_{self.modelo}.mp4')
+                                     f'{self.modelo}_{datetime.datetime.fromtimestamp(time.time()).strftime("%Y.%m.%d_%H.%M.%S")}.mp4')
             try:
                 session = streamlink.Streamlink()
                 streams = session.streams(f'hlsvariant://{isOnline}')
@@ -136,6 +136,7 @@ class Modelo(threading.Thread):
 
     def isOnline(self):
         try:
+            # TODO: if modelname == '' -> return False (to prevent exceptions and unnecessary logging if in wanted.txt appear empty line)
             resp = requests.get(
                 f'https://stripchat.com/api/front/v2/models/username/{self.modelo}/cam').json()
             hls_url = ''
