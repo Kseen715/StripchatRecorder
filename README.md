@@ -22,7 +22,7 @@ python -m pip install streamlink bs4 lxml gevent
 
 Edit the config file (config.conf) to point to the directory you want to record to, where your "wanted" file is located, the interval between checks (checkInterval, in seconds) and max lenght of single video (duration, in seconds (default - 1 hour, to fit in 2Gb limit of Telegram upload)).
 
-Add models to the "wanted.txt" file (only one model per line). The model should match the models name in their chatrooms URL (https://stripchat.com/{modelname}/). To clarify this, it should only be the "modelname" portion, not the entire url.
+Add models to the "wanted.txt" file (only one model per line). The model should match the models name in their chatrooms URL (https://stripchat.com/{modelname}/). To clarify this, it should only be the "modelname" portion, not the entire url. You can use '#' symbol (or any other tbh) before name to comment-out model from the list.
 
 To execute program, run:
 ```
