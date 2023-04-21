@@ -136,7 +136,8 @@ class Modelo(threading.Thread):
 
     def isOnline(self):
         try:
-            # TODO: if modelname == '' -> return False (to prevent exceptions and unnecessary logging if in wanted.txt appear empty line)
+            if self.modelo == '':
+                return False
             resp = requests.get(
                 f'https://stripchat.com/api/front/v2/models/username/{self.modelo}/cam').json()
             hls_url = ''
