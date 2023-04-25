@@ -17,10 +17,9 @@ if os.name == 'nt':
 mainDir = sys.path[0]
 Config = configparser.ConfigParser()
 setting = {}
-
 recording = []
-
 hilos = []
+onlineModels = 0
 
 
 def cls():
@@ -35,18 +34,38 @@ def readConfig():
         'save_directory': Config.get('paths', 'save_directory'),
         'wishlist': Config.get('paths', 'wishlist'),
         'interval': int(Config.get('settings', 'checkInterval')),
-        'postProcessingCommand': Config.get('settings', 'postProcessingCommand'),
+        'postProcessingCommand': Config.get('settings',
+                                            'postProcessingCommand'),
         'duration': int(Config.get('settings', 'duration')),
+        'maxModels': int(Config.get('settings', 'maxModels')),
     }
     try:
         setting['postProcessingThreads'] = int(
             Config.get('settings', 'postProcessingThreads'))
     except ValueError:
-        if setting['postProcessingCommand'] and not setting['postProcessingThreads']:
+        if setting['postProcessingCommand'] \
+                and not setting['postProcessingThreads']:
             setting['postProcessingThreads'] = 1
 
     if not os.path.exists(f'{setting["save_directory"]}'):
         os.makedirs(f'{setting["save_directory"]}')
+
+
+def readWanted():
+    lines = open(setting['wishlist'], 'r').read().splitlines()
+    for line in lines:
+        if '#' in line:
+            lines[lines.index(line)] = line.split('#')[0]
+    for line in lines:
+        if line == '':
+            lines.remove(line)
+    lines = list(dict.fromkeys(lines))
+    if not len(lines):
+        print('No models found in wishlist')
+        input('Press enter to exit')
+        sys.exit(0)
+    wanted = (x for x in lines if x)
+    return wanted
 
 
 def postProcess():
@@ -73,14 +92,18 @@ class Modelo(threading.Thread):
         self.lock = threading.Lock()
 
     def run(self):
-        global recording, hilos
+        global recording, hilos, onlineModels
         isOnline = self.isOnline()
+        isOnline = (onlineModels < setting['maxModels']) and isOnline
         if isOnline == False:
             self.online = False
         else:
             self.online = True
+            onlineModels += 1
+            date = datetime.datetime.fromtimestamp(
+                time.time()).strftime("%Y.%m.%d_%H.%M.%S")
             self.file = os.path.join(setting['save_directory'], self.modelo,
-                                     f'{self.modelo}_{datetime.datetime.fromtimestamp(time.time()).strftime("%Y.%m.%d_%H.%M.%S")}.mp4')
+                                     f'{self.modelo}_{date}.mp4')
             try:
                 session = streamlink.Streamlink()
                 streams = session.streams(f'hlsvariant://{isOnline}')
@@ -97,20 +120,22 @@ class Modelo(threading.Thread):
                                 del hilos[index]
                                 break
                         self.lock.release()
-                        while not (self._stopevent.isSet() or os.fstat(f.fileno()).st_nlink == 0):
+                        while not (self._stopevent.isSet()
+                                   or os.fstat(f.fileno()).st_nlink == 0):
                             try:
                                 data = fd.read(1024)
                                 f.write(data)
                             except:
                                 fd.close()
+                                onlineModels -= 1
                                 break
                     if setting['postProcessingCommand']:
                         processingQueue.put(
                             {'model': self.modelo, 'path': self.file})
             except Exception as e:
                 with open('log.log', 'a+') as f:
-                    f.write(
-                        f'\n{datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")} EXCEPTION: {e}\n')
+                    date = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+                    f.write(f'{date} EXCEPTION: {e}\n')
                 self.stop()
             finally:
                 self.exceptionHandler()
@@ -131,12 +156,15 @@ class Modelo(threading.Thread):
                     os.remove(file)
         except Exception as e:
             with open('log.log', 'a+') as f:
-                f.write(
-                    f'\n{datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")} EXCEPTION: {e}\n')
+                date = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+                f.write(f'{date} EXCEPTION: {e}\n')
 
     def isOnline(self):
+        global onlineModels
         try:
             if self.modelo == '':
+                return False
+            if onlineModels >= setting['maxModels']:
                 return False
             resp = requests.get(
                 f'https://stripchat.com/api/front/v2/models/username/{self.modelo}/cam').json()
@@ -144,7 +172,10 @@ class Modelo(threading.Thread):
             if 'cam' in resp.keys():
                 if {'isCamAvailable', 'streamName', 'viewServers'} <= resp['cam'].keys():
                     if 'flashphoner-hls' in resp['cam']['viewServers'].keys():
-                        hls_url = f'https://b-{resp["cam"]["viewServers"]["flashphoner-hls"]}.doppiocdn.com/hls/{resp["cam"]["streamName"]}/{resp["cam"]["streamName"]}.m3u8'
+                        # TODO: recognize why random numbers call error exceptions (403) in log
+                        if resp["cam"]["streamName"] != '' \
+                                and resp["cam"]["streamName"] != '':
+                            hls_url = f'https://b-{resp["cam"]["viewServers"]["flashphoner-hls"]}.doppiocdn.com/hls/{resp["cam"]["streamName"]}/{resp["cam"]["streamName"]}.m3u8'
             if len(hls_url):
                 return hls_url
             else:
@@ -186,9 +217,8 @@ class AddModelsThread(threading.Thread):
         self.counterModel = 0
 
     def run(self):
-        global hilos, recording
-        lines = open(setting['wishlist'], 'r').read().splitlines()
-        self.wanted = (x for x in lines if x)
+        global hilos, recording, onlineModels
+        self.wanted = readWanted()
         self.lock.acquire()
         aux = []
         for model in self.wanted:
@@ -198,10 +228,12 @@ class AddModelsThread(threading.Thread):
             else:
                 aux.append(model)
                 self.counterModel = self.counterModel + 1
-                if not isModelInListofObjects(model, hilos) and not isModelInListofObjects(model, recording):
+                if not isModelInListofObjects(model, hilos) \
+                        and not isModelInListofObjects(model, recording):
                     thread = Modelo(model)
                     thread.start()
                     hilos.append(thread)
+        onlineModels = len(recording)
         for hilo in recording:
             if hilo.modelo not in aux:
                 hilo.stop()
@@ -230,8 +262,14 @@ def mainProcess(startTime):
                 if len(addModelsThread.repeatedModels):
                     print('The following models are more than once in wanted: [\'' + ', '.join(
                         modelo for modelo in addModelsThread.repeatedModels) + '\']')
-                print(f'{len(hilos):02d} alive Threads (1 Thread per non-recording model), cleaning dead/not-online Threads in {cleaningThread.interval:02d} seconds, {addModelsThread.counterModel:02d} models in wanted')
-                print(f'Online Threads (models): {len(recording):02d}')
+                print(f'{len(hilos):02d} alive Threads (1 Thread per non-recording model), cleaning dead/not-online Threads in {cleaningThread.interval:02d} seconds')
+                print(f'{addModelsThread.counterModel:02d} models in wanted')
+                print(f'Online Threads (models): {len(recording):03d}', end='')
+
+                if setting['maxModels'] > 0:
+                    print(f'/{setting["maxModels"]:03d}')
+                else:
+                    print()
                 if setting['duration'] > 0:
                     print(
                         f'Time left: {setting["duration"] - timediff:.0f} seconds')
@@ -239,13 +277,13 @@ def mainProcess(startTime):
                 for hiloModelo in recording:
                     print(
                         f'  Model: {hiloModelo.modelo}  -->  File: {os.path.basename(hiloModelo.file)}')
-                print(f'Next check in {i:02d} seconds\r', end='')
+                print(f'Next models check in {i:02d} seconds\r', end='')
                 time.sleep(1)
             addModelsThread.join()
             del addModelsThread, i
-            if setting['duration'] > 0:
-                if (timediff) > setting['duration']:
-                    return
+            # if setting['duration'] > 0:
+            #     if (timediff) > setting['duration']:
+            #         return
         except:
             break
 
